@@ -31,8 +31,23 @@ $(BINARY): $(OBJECTS)
 
 .PHONY: clean
 clean:
-	rm -f $(OBJECTS) $(BINARY)
+	rm -f $(OBJECTS) $(BINARY) $(TEST_BIN)
 
 .PHONY: container
 container:
 	docker build .
+
+# --- Host-side unit tests --------------------------------------------------
+# Uses doctest (header-only, vendored at external/doctest). Pure-logic tests
+# only; production code with hardware/global-state dependencies is excluded.
+
+TEST_SRCS = $(wildcard tests/test_*.cpp)
+TEST_BIN  = tests/run_tests
+TEST_CXXFLAGS = -std=gnu++14 -Wall -O0 -g -Iexternal/doctest/doctest
+
+$(TEST_BIN): $(TEST_SRCS) external/doctest/doctest/doctest.h
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(TEST_SRCS)
+
+.PHONY: test
+test: $(TEST_BIN)
+	./$(TEST_BIN)
