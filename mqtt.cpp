@@ -79,7 +79,8 @@ extern char tmp_buffer[];
 #define MQTT_MAX_PASSWORD_LEN 100  // Maximum password length
 #define MQTT_MAX_TOPIC_LEN	   24  // Maximum topic length
 #define MQTT_MAX_ID_LEN        16  // MQTT Client Id to uniquely reference this unit
-#define MQTT_RECONNECT_DELAY  120  // Minumum of 60 seconds between reconnect attempts
+#define MQTT_RECONNECT_BACKOFF_MIN    5  // Seconds, initial reconnect delay after a disconnect
+#define MQTT_RECONNECT_BACKOFF_MAX  300  // Seconds, cap for exponential reconnect backoff
 
 #define MQTT_AVAILABILITY_TOPIC	"availability"
 #define MQTT_ONLINE_PAYLOAD  "online"
@@ -443,14 +444,22 @@ void OSMqtt::subscribe(void){
 // Regularly call the loop function to ensure "keep alive" messages are sent to the broker and to reconnect if needed.
 void OSMqtt::loop(void) {
 	static unsigned long last_reconnect_attempt = 0;
+	static unsigned long reconnect_backoff_ms = MQTT_RECONNECT_BACKOFF_MIN * 1000UL;
 
 	if (mqtt_client == NULL || !_enabled || os.status.network_fails > 0) return;
 
-	// Only attemp to reconnect every MQTT_RECONNECT_DELAY seconds to avoid blocking the main loop
-	if (!_connected() && (millis() - last_reconnect_attempt >= MQTT_RECONNECT_DELAY * 1000UL)) {
-		DEBUG_LOGF("MQTT Loop: Reconnecting\r\n");
+	// Exponential backoff: start at MIN, double on each failure, cap at MAX, reset on success.
+	if (!_connected() && (millis() - last_reconnect_attempt >= reconnect_backoff_ms)) {
+		DEBUG_LOGF("MQTT Loop: Reconnecting (backoff %lus)\r\n", reconnect_backoff_ms / 1000UL);
 		_done_subscribed = false;
-		_connect();
+		if (_connect() == MQTT_SUCCESS) {
+			reconnect_backoff_ms = MQTT_RECONNECT_BACKOFF_MIN * 1000UL;
+		} else {
+			reconnect_backoff_ms *= 2;
+			if (reconnect_backoff_ms > MQTT_RECONNECT_BACKOFF_MAX * 1000UL) {
+				reconnect_backoff_ms = MQTT_RECONNECT_BACKOFF_MAX * 1000UL;
+			}
+		}
 		last_reconnect_attempt = millis();
 	}
 
