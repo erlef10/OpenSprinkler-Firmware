@@ -153,9 +153,15 @@ public:
 	static unsigned char del(unsigned char pid);
 	static void drem_to_relative(unsigned char days[2]); // absolute to relative reminder conversion
 	static void drem_to_absolute(unsigned char days[2]);
+#if defined(OSPI) || defined(DEMO)
+	static void cache_reload_all();
+#endif
 private:
 	static void load_count();
 	static void save_count();
+#if defined(OSPI) || defined(DEMO)
+	static ProgramStruct cache[MAX_NUM_PROGRAMS];
+#endif
 };
 
 #endif  // _PROGRAM_H

@@ -39,11 +39,25 @@ unsigned char ProgramData::station_qid[MAX_NUM_STATIONS];
 LogStruct ProgramData::lastrun;
 time_os_t ProgramData::last_seq_stop_times[NUM_SEQ_GROUPS];
 
+#if defined(OSPI) || defined(DEMO)
+ProgramStruct ProgramData::cache[MAX_NUM_PROGRAMS];
+
+/** Reload the entire program cache from disk */
+void ProgramData::cache_reload_all() {
+	for (unsigned char pid = 0; pid < nprograms; pid++) {
+		file_read_block(PROG_FILENAME, &cache[pid], 1+(ulong)pid*PROGRAMSTRUCT_SIZE, PROGRAMSTRUCT_SIZE);
+	}
+}
+#endif
+
 extern char tmp_buffer[];
 
 void ProgramData::init() {
 	reset_runtime();
 	load_count();
+#if defined(OSPI) || defined(DEMO)
+	cache_reload_all();
+#endif
 }
 
 void ProgramData::reset_runtime() {
@@ -100,8 +114,12 @@ void ProgramData::eraseall() {
 /** Read a program from program file*/
 void ProgramData::read(unsigned char pid, ProgramStruct *buf) {
 	if (pid >= nprograms) return;
+#if defined(OSPI) || defined(DEMO)
+	memcpy(buf, &cache[pid], PROGRAMSTRUCT_SIZE);
+#else
 	// first unsigned char is program counter, so 1+
 	file_read_block(PROG_FILENAME, buf, 1+(ulong)pid*PROGRAMSTRUCT_SIZE, PROGRAMSTRUCT_SIZE);
+#endif
 }
 
 /** Add a program */
@@ -110,6 +128,9 @@ unsigned char ProgramData::add(ProgramStruct *buf) {
 	file_write_block(PROG_FILENAME, buf, 1+(ulong)nprograms*PROGRAMSTRUCT_SIZE, PROGRAMSTRUCT_SIZE);
 	nprograms ++;
 	save_count();
+#if defined(OSPI) || defined(DEMO)
+	memcpy(&cache[nprograms-1], buf, PROGRAMSTRUCT_SIZE);
+#endif
 	return 1;
 }
 
@@ -124,6 +145,13 @@ void ProgramData::moveup(unsigned char pid) {
 	file_read_block(PROG_FILENAME, buf2, next, PROGRAMSTRUCT_SIZE);
 	file_write_block(PROG_FILENAME, tmp_buffer, next, PROGRAMSTRUCT_SIZE);
 	file_write_block(PROG_FILENAME, buf2, pos, PROGRAMSTRUCT_SIZE);
+#if defined(OSPI) || defined(DEMO)
+	// swap cache[pid] and cache[pid-1] using a local temp to avoid <algorithm> dependency
+	ProgramStruct tmp;
+	memcpy(&tmp, &cache[pid-1], PROGRAMSTRUCT_SIZE);
+	memcpy(&cache[pid-1], &cache[pid], PROGRAMSTRUCT_SIZE);
+	memcpy(&cache[pid], &tmp, PROGRAMSTRUCT_SIZE);
+#endif
 }
 
 void ProgramData::toggle_pause(ulong delay) {
@@ -182,6 +210,9 @@ unsigned char ProgramData::modify(unsigned char pid, ProgramStruct *buf) {
 	if (pid >= nprograms)  return 0;
 	ulong pos = 1+(ulong)pid*PROGRAMSTRUCT_SIZE;
 	file_write_block(PROG_FILENAME, buf, pos, PROGRAMSTRUCT_SIZE);
+#if defined(OSPI) || defined(DEMO)
+	memcpy(&cache[pid], buf, PROGRAMSTRUCT_SIZE);
+#endif
 	return 1;
 }
 
@@ -196,6 +227,13 @@ unsigned char ProgramData::del(unsigned char pid) {
 	}
 	nprograms --;
 	save_count();
+#if defined(OSPI) || defined(DEMO)
+	// shift cache entries [pid+1 .. nprograms] down to [pid .. nprograms-1]
+	// (nprograms has already been decremented, so loop bound is the new nprograms)
+	for (unsigned char i = pid; i < nprograms; i++) {
+		memmove(&cache[i], &cache[i+1], PROGRAMSTRUCT_SIZE);
+	}
+#endif
 	return 1;
 }
 
@@ -206,6 +244,10 @@ unsigned char ProgramData::set_flagbit(unsigned char pid, unsigned char bid, uns
 	if(value) flag|=(1<<bid);
 	else flag&=(~(1<<bid));
 	file_write_byte(PROG_FILENAME, 1+(ulong)pid*PROGRAMSTRUCT_SIZE, flag);
+#if defined(OSPI) || defined(DEMO)
+	// mirror the flag byte (byte 0 of ProgramStruct) into cache
+	((unsigned char*)&cache[pid])[0] = flag;
+#endif
 	return 1;
 }
 
