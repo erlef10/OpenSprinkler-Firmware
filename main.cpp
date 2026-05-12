@@ -1770,6 +1770,24 @@ static const char log_type_names[] PROGMEM =
 	"cu\0";
 
 /** write run record to log on SD card */
+#if !defined(ARDUINO)
+// Cached log file handle for Linux/RPI builds. Keeping the handle open across
+// events avoids an fopen+fseek+fclose triple on every log write. Reused while
+// the target filename stays the same (i.e. same calendar day); closed and
+// reopened when the day rolls over, and closed defensively from delete_log()
+// before unlink so the next write reopens fresh.
+static FILE *cached_log_file = NULL;
+static char cached_log_filename[64] = {0};
+
+static void close_cached_log_file() {
+	if (cached_log_file) {
+		fclose(cached_log_file);
+		cached_log_file = NULL;
+	}
+	cached_log_filename[0] = 0;
+}
+#endif
+
 void write_log(unsigned char type, time_os_t curr_time) {
 
 	if (!os.iopts[IOPT_ENABLE_LOGGING]) return;
@@ -1819,13 +1837,15 @@ void write_log(unsigned char type, time_os_t curr_time) {
 			return;
 		}
 	}
-	FILE *file;
-	file = fopen(get_filename_fullpath(tmp_buffer), "rb+");
-	if(!file) {
-		file = fopen(get_filename_fullpath(tmp_buffer), "wb");
-		if (!file)	return;
+	// Reuse the cached handle when the target filename hasn't changed (same day);
+	// otherwise close it and open the new one.
+	if(cached_log_file == NULL || strcmp(tmp_buffer, cached_log_filename) != 0) {
+		close_cached_log_file();
+		cached_log_file = fopen(get_filename_fullpath(tmp_buffer), "ab");
+		if(!cached_log_file) return;
+		strncpy(cached_log_filename, tmp_buffer, sizeof(cached_log_filename) - 1);
+		cached_log_filename[sizeof(cached_log_filename) - 1] = 0;
 	}
-	fseek(file, 0, SEEK_END);
 #endif	// prepare log folder
 
 	// Step 2: prepare data buffer
@@ -1896,8 +1916,8 @@ void write_log(unsigned char type, time_os_t curr_time) {
 	#endif
 	file.close();
 #else
-	fwrite(tmp_buffer, 1, strlen(tmp_buffer), file);
-	fclose(file);
+	fwrite(tmp_buffer, 1, strlen(tmp_buffer), cached_log_file);
+	fflush(cached_log_file);  // hand off to kernel page cache; no fsync (durability tradeoff documented in commit)
 #endif
 }
 
@@ -1962,6 +1982,10 @@ void delete_log(char *name) {
 	#endif
 
 #else // delete_log implementation for RPI/LINUX
+	// Drop the cached write_log() handle before unlinking; otherwise we'd
+	// keep writing to a file that no longer has a path (Linux keeps the
+	// inode alive while open).
+	close_cached_log_file();
 	if (strncmp(name, "all", 3) == 0) {
 		// delete the log folder
 		rmdir(get_filename_fullpath(LOG_PREFIX));
