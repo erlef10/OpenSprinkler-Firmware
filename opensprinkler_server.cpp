@@ -242,6 +242,8 @@ void print_header_compressed_html(OTF_PARAMS_DEF, int len) {
 	res.writeHeader(F("Content-Length"), len);
 	res.writeHeader(F("Vary"), F("Accept-Encoding"));
 	res.writeHeader(F("Content-Encoding"), F("gzip"));
+	// Static assets (HTML/JS embedded in firmware) only change on firmware update; allow browser caching.
+	res.writeHeader(F("Cache-Control"), F("public, max-age=3600"));
 	res.writeHeader(F("Connection"), F("close"));
 }
 #else
